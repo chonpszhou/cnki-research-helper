@@ -1,44 +1,40 @@
-# CNKI研究助手 - 环境配置指南
+# CNKI研究助手 · 配置指南
 
-> 适用对象：任何拥有CNKI机构/个人账号的研究者
-> 支持平台：macOS（Linux/Windows 类似）
-
----
-
-## 前提条件
-
-### 1. Chrome浏览器
-系统已安装 Google Chrome（任何版本均可）
-
-### 2. Node.js
-```bash
-node --version   # 需要 v16+
-npm --version
-```
-如未安装: https://nodejs.org/
+> 零基础图文教程，跟着做一定能成功
 
 ---
 
-## 快速安装
+## 环境要求
+
+| 软件 | 版本 | 说明 |
+|------|------|------|
+| macOS | 12+ | Windows/Linux类似 |
+| Google Chrome | 任意版本 | [下载地址](https://www.google.com/chrome/) |
+| Python | 3.8+ | `python3 --version` 检查 |
+| Node.js | 16+ | `node --version` 检查，[下载地址](https://nodejs.org/) |
+
+---
+
+## 第一步：克隆项目
 
 ```bash
-# 克隆（或下载）本项目
-git clone https://github.com/YOUR_USERNAME/cnki-research-helper.git
+git clone https://github.com/chonpszhou/cnki-research-helper.git
 cd cnki-research-helper
-
-# 安装依赖（仅Python标准库，无需pip install）
-# 可选：确认curl可用
-curl --version
 ```
+
+或者直接下载ZIP包，解压后进入目录。
 
 ---
 
-## 第一步：启动Chrome Debug模式
+## 第二步：启动Chrome Debug模式
 
-**必须与日常使用的Chrome隔离**，否则会影响正常浏览。
+> ⚠️ **必须使用独立Chrome配置**，否则会影响你正常使用的Chrome
+
+### macOS
+
+打开**终端**（Terminal），粘贴运行：
 
 ```bash
-# macOS 启动专用Debug Chrome
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --user-data-dir="$HOME/Library/Application Support/Google/Chrome-Debug-CNKI" \
@@ -46,176 +42,274 @@ curl --version
   --no-default-browser-check &
 ```
 
-> 提示：第一次运行后，`Chrome-Debug-CNKI` 配置文件夹会被创建，以后直接运行即可自动复用。
+### Windows
 
-### 验证Chrome Debug是否启动
+```powershell
+"C:\Program Files\Google\Chrome\Application\chrome.exe" ^
+  --remote-debugging-port=9222 ^
+  --user-data-dir="%USERPROFILE%\Chrome-Debug-CNKI" ^
+  --no-first-run
+```
+
+### Linux
+
+```bash
+google-chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/Chrome-Debug-CNKI" \
+  --no-first-run &
+```
+
+> 💡 **第一次运行会创建配置文件夹**，以后直接运行上述命令即可，会自动复用。
+
+### 验证Chrome启动成功
+
 ```bash
 curl -s http://127.0.0.1:9222/json/version | python3 -c \
-  "import sys,json; d=json.load(sys.stdin); print('✅ Chrome:', d['Browser'])"
+  "import sys,json; d=json.load(sys.stdin); print('✅ Chrome已就绪:', d['Browser'])"
 ```
-期望输出：`✅ Chrome: Chrome/xxx.x.xxxx.xx`
+
+期望输出：`✅ Chrome已就绪: Chrome/148.x.xxxx.xx`
 
 ---
 
-## 第二步：启动CDP Proxy
+## 第三步：启动CDP Proxy
 
 ```bash
-# 在项目目录下
-cd cnki-research-helper/scripts
-
-# 启动CDP Proxy（端口3456 → Chrome 9222）
+cd ~/cnki-research-helper/scripts
 node cdp-proxy.mjs 3456 9222 &
 ```
 
-> `cdp-proxy.mjs` 已包含在本项目的 `scripts/` 目录下。
+### 验证Proxy启动成功
 
-### 验证Proxy是否正常
 ```bash
 curl -s http://127.0.0.1:3456/health
 ```
-期望输出：`{"status":"ok","proxy":"cdp-proxy","version":"..."}`
+
+期望输出：`{"status":"ok","proxy":"cdp-proxy",...}`
+
+> 如果报错 `Connection refused`，等2秒再试（Chrome启动较慢）
 
 ---
 
-## 第三步：手动登录CNKI（一次性操作）
+## 第四步：手动登录知网
 
-CNKI有Tencent滑动验证码，**无法自动化登录**，需要手动操作一次。
+这是整个流程中**唯一需要人工操作**的步骤。
 
-### 3.1 打开登录页
-在已启动的Debug Chrome中（你刚才启动的窗口）访问：
+### 4.1 打开登录页
+
+在刚才启动的Chrome窗口中，访问：
 ```
 https://login.cnki.net/
 ```
 
-### 3.2 登录
-- 输入你的**知网账号**（机构账号或个人账号均可）
-- 完成滑动验证
-- 确认登录成功（显示机构名称或个人中心）
+### 4.2 完成登录
 
-### 3.3 导出Cookie（重要！）
-登录后，在Debug Chrome地址栏执行以下JavaScript：
+- 输入你的**知网账号**（机构账号或个人账号都行）
+- 完成滑动验证码（人才能操作，程序做不到 😅）
+- 确认登录成功（右上角显示你的名字/机构名）
 
-1. 打开开发者工具：`Cmd + Option + J`（Mac）
+### 4.3 导出Cookie
+
+登录成功后，在Chrome地址栏：
+
+1. 按 `Cmd + Option + J`（Mac）或 `F12`（Windows）打开开发者工具
 2. 切换到 **Console（控制台）** 标签
 3. 粘贴以下代码并回车：
 
 ```javascript
 copy(document.cookie);
-console.log("✅ Cookie已复制到剪贴板，长度:", document.cookie.length);
+console.log("✅ Cookie已复制，长度:", document.cookie.length, "字节");
 ```
 
-4. 将复制的内容保存到文件：
+4. 你会看到 `✅ Cookie已复制，长度: 435 字节`（具体数字不重要，>100就对了）
+
+### 4.4 保存Cookie到文件
+
+回到终端，运行：
+
 ```bash
-# 方式1：直接粘贴到文件
-echo '刚才复制的cookie内容' > ~/.cnki_cookies.txt
-
-# 方式2：用Python保存
-python3 -c "
-import subprocess
-subprocess.run(['pbcopy'], input=input('粘贴Cookie后按Enter: ').encode())
-" > ~/.cnki_cookies.txt
+echo '请在这里粘贴刚才复制的Cookie内容（Cmd+V），然后按回车：' && \
+read -r cookie && echo "$cookie" > ~/.cnki_cookies.txt && \
+echo "✅ 已保存，$(wc -c < ~/.cnki_cookies.txt) 字节"
 ```
 
-### 3.4 验证Cookie
+### 4.5 验证Cookie
+
 ```bash
 wc -c ~/.cnki_cookies.txt
-# 期望：> 100 字节（Cookie通常几百字节）
+# 期望：> 100 字节
 ```
 
-> ⚠️ **Cookie有效期**：机构账号约30天，个人账号更短。过期后重新执行3.1-3.4即可。
+> ⚠️ **Cookie有效期约30天**。过期后重新执行4.1-4.4即可。
 
 ---
 
-## 第四步：配置并运行下载工具
+## 第五步：运行下载工具
 
-### 4.1 设置Cookie环境变量
-```bash
-export CNKI_COOKIES="$(cat ~/.cnki_cookies.txt)"
-```
+### 基本用法
 
-### 4.2 基本用法
 ```bash
 cd ~/cnki-research-helper
 
-# 搜索"算电协同"，下载前2页
-python3 scripts/cnki_downloader.py -k "算电协同" -p 2
+# 搜索"碳中和"，下载前2页
+python3 scripts/cnki_downloader.py -k "碳中和" -p 2
 
-# 仅下载期刊论文
-python3 scripts/cnki_downloader.py -k "碳资产管理" -t journal
+# 仅下载期刊论文（跳过报纸）
+python3 scripts/cnki_downloader.py -k "储能" -t journal
 
-# 仅提取URL，不下载PDF（快速测试）
-python3 scripts/cnki_downloader.py -k "储能" --skip-pdf
+# 仅提取URL，不下载（快速测试）
+python3 scripts/cnki_downloader.py -k "虚拟电厂" --skip-pdf
 ```
 
-### 4.3 完整参数
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `-k, --keyword` | 搜索关键词 | 环境变量`KEYWORD`或"算电协同" |
-| `-p, --pages` | 抓取页数 | 1 |
-| `-t, --type` | 论文类型：`all/journal/newspaper` | all |
-| `--skip-pdf` | 仅提取URL，不下载PDF | false |
+### 参数说明
 
-### 4.4 自定义保存目录
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `-k` | 搜索关键词 | `-k "算电协同"` |
+| `-p` | 下载页数（每页20篇） | `-p 3`（下载60篇） |
+| `-t` | 论文类型 | `-t journal`（仅期刊） |
+| `--skip-pdf` | 只提取URL，不下PDF | 快速测试用 |
+
+### 论文类型说明
+
+| 类型 | 标记 | PDF可用 | 说明 |
+|------|------|--------|------|
+| 期刊论文 | 期刊 | ✅ 有 | 通常有PDF，可下载 |
+| 报纸文章 | 报纸 | ❌ 无 | 只有CAJ格式 |
+| 学位论文 | 硕士/博士 | ⚠️ 部分 | 通常可下 |
+
+---
+
+## 第六步：查看结果
+
 ```bash
-export SAVE_DIR="/Users/yourname/Papers"
-python3 scripts/cnki_downloader.py -k "你的关键词"
+# 查看下载的PDF
+ls -lh ~/cnki-research-helper/downloads/
+
+# 查看提取的URL列表
+ls ~/cnki-research-helper/downloads/urls_*.json
 ```
 
 ---
 
-## 常见问题
+## 常见问题排查
 
-### Q1: 提示"找不到已登录CNKI的Chrome标签页"
-**原因**：Debug Chrome未启动，或Cookie已过期。
-```bash
-# 检查Chrome Debug状态
-curl -s http://127.0.0.1:9222/json | python3 -c \
-  "import sys,json; tabs=json.load(sys.stdin); print('标签页数:', len([t for t in tabs if t['type']=='page']))"
+### 问题1：Chrome Debug连不上
+
 ```
-**解决**：重新启动Chrome Debug，并重新登录CNKI导出Cookie。
+curl: (7) Failed to connect to 127.0.0.1 port 9222
+```
 
-### Q2: 下载PDF时大量失败
-**原因**：CDP Proxy连接不稳定，或网络问题。
-**解决**：重启CDP Proxy（`pkill -f cdp-proxy.mjs && node cdp-proxy.mjs 3456 9222 &`）
+**原因**：Chrome Debug没启动成功
+**解决**：重新运行Chrome启动命令，等待3秒后再试
 
-### Q3: 报纸论文PDF下载失败
-**正常现象**：CNKI报纸文章**不提供PDF**，仅有CAJ格式（需要Windows CAJViewer）。
+### 问题2：Proxy连接被拒绝
 
-### Q4: "安全验证"拦截
-**原因**：CNKI风控触发。
-**解决**：等待10分钟后再试，或隔天再试。建议避免短时间内大量请求。
+```
+Connection refused
+```
 
-### Q5: v=参数是什么？
-知网详情页URL中的`v=`参数是**短期签名**，用于标识这篇论文的访问权限。同一URL反复访问会被拦截。工具会自动处理，每次从搜索结果重新获取最新URL。
+**原因**：CDP Proxy没启动，或端口被占用
+**解决**：
+```bash
+pkill -f cdp-proxy.mjs
+node ~/cnki-research-helper/scripts/cdp-proxy.mjs 3456 9222 &
+```
+
+### 问题3：找不到已登录的标签页
+
+```
+❌ 找不到已登录CNKI的Chrome标签页
+```
+
+**原因**：Cookie已过期，或Chrome窗口没有打开知网
+**解决**：
+1. 重新登录知网（第四步）
+2. 确认Chrome窗口开着知网页面（任意页面都行）
+
+### 问题4：PDF下载全是错误页
+
+```
+❌ 下载失败（可能是错误页面）
+```
+
+**原因**：PDF URL过期（知网v=参数短期有效）
+**解决**：这是正常现象，重试几次会好。或等待10分钟后再试（知网风控限制）
+
+### 问题5：脚本运行很慢
+
+**原因**：每次访问详情页要等待5秒让页面渲染
+**解决**：这是设计如此，避免请求过快触发风控。耐心等待
 
 ---
 
-## 项目结构
+## 一键启动脚本
 
+嫌每次输命令麻烦？把这个保存为 `start.sh`：
+
+```bash
+#!/bin/bash
+# 启动CNKI研究助手
+
+echo "🚀 启动Chrome Debug..."
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/Library/Application Support/Google/Chrome-Debug-CNKI" \
+  --no-first-run --no-default-browser-check &
+
+sleep 3
+
+echo "🚀 启动CDP Proxy..."
+cd ~/cnki-research-helper/scripts
+node cdp-proxy.mjs 3456 9222 &
+
+sleep 2
+echo "✅ 就绪！请在Chrome中登录知网，然后运行下载脚本"
 ```
-cnki-research-helper/
-├── README.md              # 本文件
-├── LICENSE                # MIT开源许可证
-├── scripts/
-│   ├── cdp-proxy.mjs      # CDP Proxy（Chrome DevTools协议桥接）
-│   ├── cnki_downloader.py # 主下载脚本
-│   └── extract_notes.py   # Obsidian笔记生成（可选）
-└── docs/
-    ├── setup-guide.md      # 本配置指南
-    └── workflow.md         # 完整工作流程详解
+
+```bash
+chmod +x start.sh
+./start.sh
 ```
 
 ---
 
-## 卸载/清理
+## 进阶用法
+
+### 集成Obsidian笔记
 
 ```bash
-# 停止后台进程
-pkill -f "cdp-proxy.mjs"
+# 下载完成后，用 Obsidian 插件「Metadata Menu」或「Frontmatter」自动读取PDF元数据
+# 或使用 python-docx 将PDF路径写入笔记模板
 
-# 删除Debug Chrome配置（可选）
-rm -rf "$HOME/Library/Application Support/Google/Chrome-Debug-CNKI"
-
-# 删除Cookie
-rm ~/.cnki_cookies.txt
+# 示例：生成带PDF路径的Obsidian笔记
+python3 -c "
+import json, os
+for f in os.listdir('downloads'):
+    if f.endswith('.pdf'):
+        name = f.replace('.pdf','')
+        print(f'---\\ntitle: {name}\\npdf: ./downloads/{f}\\n---')
+"
 ```
+
+### 自定义搜索
+
+```bash
+# 多关键词搜索（分别运行）
+python3 scripts/cnki_downloader.py -k "碳达峰 碳中和" -p 2
+python3 scripts/cnki_downloader.py -k "储能 调度" -p 2
+python3 scripts/cnki_downloader.py -k "源网荷储" -p 2
+```
+
+### 定时任务
+
+```bash
+# 每周一自动更新"碳中和"相关论文
+# 添加到 crontab: crontab -e
+0 9 * * 1 cd ~/cnki-research-helper && python3 scripts/cnki_downloader.py -k "碳中和" -p 1 >> logs/weekly.log 2>&1
+```
+
+---
+
+*遇到问题？欢迎提交 [Issue](https://github.com/chonpszhou/cnki-research-helper/issues)*
