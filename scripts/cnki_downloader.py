@@ -84,16 +84,92 @@ def get_logged_in_tab() -> str:
 
 
 def get_search_results(tab: str = "") -> list:
-    """从搜索结果页提取所有论文URL"""
+    """从搜索结果页提取所有论文URL（自动降级：DOM→innerText）"""
     if not tab:
         tab = TAB_ID
 
+    # 先尝试 innerText 解析（兼容新版动态页面）
+    papers = _get_results_by_text(tab)
+    if papers:
+        print(f"  ✅ innerText解析法成功: {len(papers)} 篇")
+        return papers
+
+    # 降级：尝试 DOM 表格解析（旧版备用）
+    papers_dom = _get_results_by_dom(tab)
+    if papers_dom:
+        print(f"  ✅ DOM解析法成功: {len(papers_dom)} 篇")
+        return papers_dom
+
+    print(f"  ⚠️  两解析法均失败，等待更久后重试...")
+    time.sleep(5)
+    papers = _get_results_by_text(tab)
+    if papers:
+        return papers
+    return []
+
+
+def _get_results_by_text(tab: str) -> list:
+    """通过 innerText 提取（兼容新版动态页面）"""
+    js = r"""(function(){
+  var text = (document.body ? document.body.innerText : '') || '';
+  var resultsIdx = text.indexOf('共找到');
+  if(resultsIdx < 0) return JSON.stringify({error: 'no results marker'});
+  var section = text.slice(resultsIdx, resultsIdx + 8000);
+  var lines = section.split('\n').map(function(l){ return l.trim(); }).filter(function(l){ return l.length > 0; });
+  var papers = [];
+  var i = 0;
+  while(i < lines.length) {
+    var line = lines[i];
+    if(line.length > 10 && line.length < 200 && i + 2 < lines.length) {
+      if(!line.match(/^\d+$/) && !line.match(/@/) && line.length > 15 &&
+         !line.match(/上一页|下一页|首页|尾页|共找到|条结果/) &&
+         line.length < 150) {
+        var author = ''; var source = ''; var year = '';
+        for(var j = i+1; j < Math.min(i+6, lines.length); j++) {
+          var ctx = lines[j] || '';
+          var ym = ctx.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{4}[-/]\d{1,2}|\d{4}年)/);
+          if(ym && !year) year = ym[0];
+          if((ctx.includes('学报') || ctx.includes('研究') || ctx.includes('评论') ||
+              ctx.includes('民族') || ctx.includes('人民') || ctx.includes('中国') ||
+              ctx.includes('学院') || ctx.includes('宗教') || ctx.includes('教育') ||
+              ctx.includes('论坛') || ctx.includes('日报') || ctx.includes('期刊')) &&
+             ctx.length < 40 && !ctx.match(/^\d+$/) && ctx.length > 4) {
+            if(!source) source = ctx;
+          }
+          if(ctx.length > 0 && ctx.length < 15 && ctx.match(/^[\u4e00-\u9fa5]{2,6}$/) &&
+             !ctx.includes('年') && !ctx.includes('月')) {
+            if(!author) author = ctx;
+          }
+        }
+        papers.push({title: line, url: '', author: author, source: source, year: year, dbtype: ''});
+        i += 2; continue;
+      }
+    }
+    i++;
+  }
+  var seen = {}; papers = papers.filter(function(p){ if(seen[p.title]) return false; seen[p.title] = true; return p.title.length > 15; });
+  return JSON.stringify(papers.slice(0, 30));
+})()"""
+    result = cdp_eval(js, tab, timeout=25)
+    try:
+        data = json.loads(result)
+        if isinstance(data, dict) and "error" in data:
+            return []
+        if isinstance(data, list) and len(data) > 0:
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _get_results_by_dom(tab: str) -> list:
+    """通过 DOM 表格提取（旧版备用）"""
     js = r"""(function(){
   var t = document.querySelector('.result-table,#GridCpTable,.list-tab')
       || Array.from(document.querySelectorAll('table')).find(function(t){
-        return t.textContent.includes('""" + os.environ.get("KEYWORD", "算电协同") + r"""')&&t.querySelector('a[href*=kcms2]');
+        return t.querySelector('a[href*=kcms2]');
       });
-  if(!t) return JSON.stringify({error: 'no table', bodyLen: document.body.innerText.length});
+  if(!t) return JSON.stringify({error: 'no table'});
   var rows = t.querySelectorAll('tr');
   var r = [];
   for(var row of rows){
@@ -112,16 +188,16 @@ def get_search_results(tab: str = "") -> list:
   }
   return JSON.stringify(r);
 })()"""
-
     result = cdp_eval(js, tab)
     try:
         data = json.loads(result)
         if isinstance(data, dict) and "error" in data:
-            print(f"  ⚠️  {data['error']}, bodyLen={data.get('bodyLen','?')}")
             return []
-        return json.loads(result)
+        if isinstance(data, list) and len(data) > 0:
+            return data
     except Exception:
-        return []
+        pass
+    return []
 
 
 def extract_pdf_url(detail_url: str, tab: str = "") -> str:
