@@ -67,7 +67,7 @@ def _curl_post(url: str, data: dict, timeout: int = 15) -> str:
     return r.stdout
 
 
-def cdp_eval(js: str, tab: str = "") -> str:
+def cdp_eval(js: str, tab: str = "", timeout: int = 20) -> str:
     if not tab:
         tab = _get_tab()
     if not tab:
@@ -75,7 +75,7 @@ def cdp_eval(js: str, tab: str = "") -> str:
     encoded_js = quote(js, safe="")
     r = _curl(
         f"{CNKI_PROXY}/eval?target={tab}&script={encoded_js}",
-        timeout=20
+        timeout=timeout
     )
     try:
         return json.loads(r).get("value", "")
@@ -109,6 +109,9 @@ def _get_tab() -> Optional[str]:
         return TAB_ID
     targets = cdp_targets()
     for t in targets:
+        # CDP Proxy 有时返回字符串而非字典，加此防御
+        if isinstance(t, str):
+            continue
         url = t.get("url", "").lower()
         title = t.get("title", "")
         if "cnki" in url or "中国知网" in title:
@@ -123,6 +126,7 @@ def _get_tab() -> Optional[str]:
 def search_papers(keyword: str, pages: int = 1) -> dict:
     """
     搜索 CNKI，返回论文列表（不含 PDF URL）。
+    支持 kns.cnki.net（旧版）和 www.cnki.net（新版，绕过 SSL）两种入口。
     返回: { total, papers: [{seq, title, url, source, date, dbtype}], warnings }
     """
     tab = _get_tab()
@@ -135,14 +139,13 @@ def search_papers(keyword: str, pages: int = 1) -> dict:
     )
 
     cdp_navigate(search_url, tab)
-    time.sleep(6)  # 等待JS渲染
+    time.sleep(12)  # 新版结果动态加载，等待更久
 
     all_papers = []
     warnings = []
 
     for page in range(1, pages + 1):
         if page > 1:
-            # 点击下一页
             js = r"""(function(){
   var ps = document.querySelectorAll('.pagesnums a,.pager a');
   for(var p of ps){
@@ -153,9 +156,127 @@ def search_papers(keyword: str, pages: int = 1) -> dict:
   return false;
 })()"""
             cdp_eval(js, tab)
-            time.sleep(5)
+            time.sleep(10)
 
-        js_extract = r"""(function(){
+        # 方案1：尝试 innerText 解析（兼容新版动态页面）
+        papers = _extract_papers_by_text(tab, keyword)
+        if papers:
+            all_papers.extend(papers)
+            warnings.append(f"第{page}页: innerText解析法成功({len(papers)}篇)")
+        else:
+            warnings.append(f"第{page}页: innerText解析法失败，尝试DOM解析")
+            # 方案2：表格DOM解析（备用）
+            papers_dom = _extract_papers_by_dom(tab, keyword)
+            if papers_dom:
+                all_papers.extend(papers_dom)
+                warnings.append(f"第{page}页: DOM解析成功({len(papers_dom)}篇)")
+
+    journal_count = sum(1 for p in all_papers if "期刊" in p.get("dbtype",""))
+    newspaper_count = sum(1 for p in all_papers if "报纸" in p.get("dbtype",""))
+
+    return {
+        "keyword": keyword,
+        "total": len(all_papers),
+        "journal_count": journal_count,
+        "newspaper_count": newspaper_count,
+        "papers": all_papers,
+        "warnings": warnings
+    }
+
+
+def _extract_papers_by_text(tab: str, keyword: str) -> list:
+    """
+    通过 innerText 提取论文列表（兼容新版动态渲染页面）。
+    工作原理：搜索结果在页面加载完成后，innerText 中包含完整的题名列表。
+    """
+    js = r"""(function(){
+  var text = (document.body ? document.body.innerText : '') || '';
+  // 找到 "共找到 N 条结果" 之后的区域
+  var resultsIdx = text.indexOf('共找到');
+  if(resultsIdx < 0) return JSON.stringify({error: 'no results marker'});
+  var section = text.slice(resultsIdx, resultsIdx + 8000);
+
+  // 按换行分割，每行是一条结果信息
+  var lines = section.split('\n').map(function(l){ return l.trim(); }).filter(function(l){ return l.length > 0; });
+
+  var papers = [];
+  var i = 0;
+  while(i < lines.length) {
+    var line = lines[i];
+    // 找题名行：包含 kcms2 链接特征（题名后面通常跟着作者、期刊、年份）
+    if(line.length > 10 && line.length < 200 && i + 2 < lines.length) {
+      var nextLine = lines[i+1] || '';
+      var next2Line = lines[i+2] || '';
+      // 题名行特征：不包含 @qq 等邮箱后缀，不纯是数字，有一定长度
+      if(!line.match(/^\d+$/) && !line.match(/@/) && line.length > 15 &&
+         (nextLine.length < 30 || next2Line.length < 30)) {
+        // 过滤掉分页导航、栏目名称
+        if(!line.match(/上一页|下一页|首页|尾页|共找到|条结果/) &&
+           !line.match(/^\d+$/) &&
+           line.length < 150) {
+          // 尝试从上下文推断作者、来源、年份
+          var author = '';
+          var source = '';
+          var year = '';
+          var date = '';
+          for(var j = i+1; j < Math.min(i+6, lines.length); j++) {
+            var ctx = lines[j] || '';
+            // 年份 4位数字
+            var ym = ctx.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{4}[-/]\d{1,2}|\d{4}年)/);
+            if(ym && !year) year = ym[0];
+            // 期刊/报纸名称（常见后缀）
+            if((ctx.includes('学报') || ctx.includes('研究') || ctx.includes('评论') ||
+                ctx.includes('民族') || ctx.includes('人民') || ctx.includes('中国') ||
+                ctx.includes('学院') || ctx.includes('宗教') || ctx.includes('教育') ||
+                ctx.includes('论坛') || ctx.includes('日报') || ctx.includes('期刊')) &&
+               ctx.length < 40 && !ctx.match(/^\d+$/) && ctx.length > 4) {
+              if(!source) source = ctx;
+            }
+            // 作者（常见格式：2-4个汉字）
+            if(ctx.length > 0 && ctx.length < 15 && ctx.match(/^[\u4e00-\u9fa5]{2,6}$/) &&
+               !ctx.includes('年') && !ctx.includes('月')) {
+              if(!author) author = ctx;
+            }
+          }
+          papers.push({
+            title: line,
+            url: '',
+            author: author,
+            source: source,
+            year: year,
+            dbtype: ''
+          });
+          i += 2; // 跳过题名和作者行
+          continue;
+        }
+      }
+    }
+    i++;
+  }
+  // 去重
+  var seen = {};
+  papers = papers.filter(function(p){
+    if(seen[p.title]) return false;
+    seen[p.title] = true;
+    return p.title.length > 15;
+  });
+  return JSON.stringify(papers.slice(0, 30));
+})()"""
+    result = cdp_eval(js, tab, timeout=25)
+    try:
+        data = json.loads(result)
+        if isinstance(data, dict) and "error" in data:
+            return []
+        if isinstance(data, list) and len(data) > 0:
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _extract_papers_by_dom(tab: str, keyword: str) -> list:
+    """备用：通过 DOM 表格提取论文列表（兼容旧版页面）"""
+    js = r"""(function(){
   var t = document.querySelector('.result-table,#GridCpTable,.list-tab')
       || Array.from(document.querySelectorAll('table')).find(function(t){
         return t.textContent.includes('""" + keyword + r"""')&&t.querySelector('a[href*=kcms2]');
@@ -179,31 +300,16 @@ def search_papers(keyword: str, pages: int = 1) -> dict:
   }
   return JSON.stringify(r);
 })()"""
-
-        result = cdp_eval(js_extract, tab)
-        try:
-            papers = json.loads(result)
-            if isinstance(papers, dict) and "error" in papers:
-                warnings.append(papers["error"])
-                break
-        except Exception:
-            warnings.append(f"第{page}页解析失败")
-            continue
-
-        all_papers.extend(papers)
-
-    # 期刊优先（报纸无PDF）
-    journal_count = sum(1 for p in all_papers if "期刊" in p.get("dbtype",""))
-    newspaper_count = sum(1 for p in all_papers if "报纸" in p.get("dbtype",""))
-
-    return {
-        "keyword": keyword,
-        "total": len(all_papers),
-        "journal_count": journal_count,
-        "newspaper_count": newspaper_count,
-        "papers": all_papers,
-        "warnings": warnings
-    }
+    result = cdp_eval(js, tab)
+    try:
+        papers = json.loads(result)
+        if isinstance(papers, dict) and "error" in papers:
+            return []
+        if isinstance(papers, list) and len(papers) > 0:
+            return papers
+    except Exception:
+        pass
+    return []
 
 
 def extract_paper_pdf_url(detail_url: str) -> dict:
@@ -336,7 +442,7 @@ def health():
     """健康检查 + Chrome标签页状态"""
     tab = _get_tab()
     targets = cdp_targets()
-    cnki_tabs = [t for t in targets if "cnki" in t.get("url","").lower()]
+    cnki_tabs = [t for t in targets if isinstance(t, dict) and "cnki" in t.get("url","").lower()]
     return {
         "status": "ok",
         "has_tab": bool(tab),
