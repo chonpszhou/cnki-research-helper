@@ -90,6 +90,23 @@ python3 scripts/cnki_api.py --port 8080 &
 curl "http://localhost:8080/search?kw=算电协同&pages=1"
 ```
 
+### 方式C：批量元数据采集（无需账号，最新验证 ✅）
+
+不需要知网账号！直接从搜索结果页提取论文元数据，生成 Obsidian 笔记。
+
+```bash
+# Step 1: 打开搜索结果页（需1次人工验证码）
+# Chrome导航到: https://kns.cnki.net/kns8s/defaultresult/index?kw=你的关键词
+
+# Step 2: 提取元数据（CDP eval）
+curl "http://127.0.0.1:3456/eval?target=<TAB_ID>&script=$(python3 -c 'import urllib.parse; print(urllib.parse.quote("""(function(){var rs=[];document.querySelectorAll(\".result-list li,.article-list li\").forEach(function(li){var t=li.querySelector(\".title a\")||li.querySelector("a.title");if(t)rs.push({title:t.textContent.trim(),url:t.href,author:(li.querySelector(\".author\")||{textContent:\"\"}).textContent.trim(),source:(li.querySelector(\".source\")||{textContent:\"\"}).textContent.trim(),year:(li.querySelector(\".year\")||{textContent:\"\"}).textContent.trim(),dbtype:(li.querySelector(\".db\")||{textContent:\"\"}).textContent.trim()});});return JSON.stringify(rs);})()"""))'"
+
+# Step 3: 保存为 papers.json → Python分类脚本 → Obsidian笔记
+# 详见 docs/workflow.md#实战验证搜索结果页提取法
+```
+
+**2026-05-14 实测：鄂尔多斯蒙古族文化主题，单次采集151篇，仅需1次人工验证。**
+
 ---
 
 ## 🏗️ 架构说明

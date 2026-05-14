@@ -135,6 +135,122 @@ Cookie有效期约30天，过期后需要重新登录。
 
 ---
 
+---
+
+## ✅ 实战验证：搜索结果页提取法（2026-05-14）
+
+> 这是目前最稳定的采集方式：**不进详情页，直接从搜索结果列表页提取元数据**。
+
+### 核心发现
+
+CNKI 的反爬验证只在**详情页**触发（`/kcms2/article/abstract?v=...`），而**搜索结果列表页**（`/kns8s/defaultresult/index`）可以直接访问，无验证码。
+
+### URL 格式
+
+```
+# 搜索结果列表页（无需验证码）
+https://kns.cnki.net/kns8s/defaultresult/index?kw=关键词&korder=SC
+
+# 详情页（触发CAPTCHA，不可自动化）
+https://kns.cnki.net/kcms2/article/abstract?v=签名参数...
+```
+
+### 操作流程
+
+**Step 1：打开搜索结果页（需处理1次CAPTCHA）**
+```bash
+TARGET="<TAB_ID>"
+curl "http://127.0.0.1:3456/navigate?target=${TARGET}&url=$(python3 -c 'import urllib.parse; print(urllib.parse.quote("https://kns.cnki.net/kns8s/defaultresult/index?kw=鄂尔多斯蒙古族文化&korder=SC"))')"
+```
+
+**Step 2：等待页面加载（约5秒）后提取元数据**
+```javascript
+// CDP eval：从搜索结果页提取全部论文元数据
+(function(){
+  var results = [];
+  // 知网搜索结果列表结构
+  var items = document.querySelectorAll('.result-list li, .article-list li, .brief-list li');
+  if (items.length === 0) {
+    // 备选选择器
+    items = document.querySelectorAll('[class*="result"] li, [class*="article"] li');
+  }
+  items.forEach(function(li){
+    var titleEl = li.querySelector('.title a, a.title, [class*="title"] a');
+    var authorEl = li.querySelector('.author, [class*="author"]');
+    var sourceEl = li.querySelector('.source, [class*="source"]');
+    var yearEl = li.querySelector('.year, [class*="year"], [class*="date"]');
+    var typeEl = li.querySelector('.db, [class*="type"], [class*="dbtype"]');
+    if (titleEl) {
+      results.push({
+        title: titleEl.textContent.trim(),
+        url: titleEl.href,
+        author: authorEl ? authorEl.textContent.trim() : '',
+        source: sourceEl ? sourceEl.textContent.trim() : '',
+        year: yearEl ? yearEl.textContent.trim() : '',
+        dbtype: typeEl ? typeEl.textContent.trim() : ''
+      });
+    }
+  });
+  return JSON.stringify({count: results.length, papers: results.slice(0, 10)});
+})()
+```
+
+**Step 3：翻页采集**
+```javascript
+// 点击下一页按钮
+var nextBtn = document.querySelector('.next, .page-next, [class*="next"], a:contains("下一页")');
+if (nextBtn) { nextBtn.click(); }
+```
+
+### 实战结果（2026-05-14）
+
+| 指标 | 数值 |
+|------|------|
+| 采集论文总数 | **151篇** |
+| 期刊论文 | 92篇（特色期刊25 + 期刊67） |
+| 学位论文 | 47篇（硕士45 + 博士2） |
+| 会议论文 | 12篇 |
+| 主题 | 鄂尔多斯蒙古族文化 |
+| 采集耗时 | ~30分钟（含1次人工验证） |
+| 入库方式 | Python脚本分类 → Obsidian笔记 |
+
+### 元数据字段
+
+搜索结果页可提取的字段：
+- `title` — 论文标题
+- `url` — 详情页URL（含v=签名参数）
+- `author` — 作者
+- `source` — 来源期刊/学校
+- `year` — 发表年份
+- `dbtype` — 类型（期刊/硕士/博士/会议）
+
+⚠️ **注意**：搜索结果页**无摘要**，摘要需另外补充。
+
+### 局限性
+
+1. **无摘要**：搜索结果页只含标题/作者/来源，无摘要
+2. **PDF不可下**：元数据≠PDF下载权限，PDF仍需登录态+机构订阅
+3. **Cookie过期**：约2小时需重新登录
+4. **搜索结果有限**：单次搜索最多4页（约80条），需变换关键词扩大覆盖
+
+### 扩展方向
+
+```python
+# 多关键词扩展
+keywords = [
+    "鄂尔多斯蒙古族文化",
+    "鄂尔多斯婚礼习俗",
+    "鄂尔多斯蒙古族音乐",
+    "鄂尔多斯蒙古族刺绣",
+    "鄂尔多斯非物质文化遗产",
+    "鄂尔多斯民歌",
+]
+
+# 批量采集 → papers.json → Obsidian分类 → 笔记双向链接
+```
+
+---
+
 ## 安全与隐私
 
 | 方面 | 说明 |
