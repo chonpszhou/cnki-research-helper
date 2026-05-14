@@ -122,7 +122,7 @@ return pdfs[0]; // 返回第一个PDF链接
 知网Cookie包含两部分认证信息：
 
 ```
-Ecp_LoginStuts={"IsAutoLogin":true,"UserName":"lydl08",...}
+Ecp_LoginStuts={"IsAutoLogin":true,"UserName":"your_username",...}
 cnkiUserKey=b458db20-5830-2471-4f43-b2c46aeb70c3
 SID=...
 ```
